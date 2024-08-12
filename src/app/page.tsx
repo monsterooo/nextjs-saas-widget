@@ -1,4 +1,10 @@
-import Image from "next/image";
+import Image from "next/image"
+
+export const metadata = {
+  title: "Next.js Sass Widget",
+  description:
+    "I want to show you how to add commonly used Sass services to your project.",
+}
 
 export default function Home() {
   return (
@@ -109,5 +115,5 @@ export default function Home() {
         </a>
       </div>
     </main>
-  );
+  )
 }
