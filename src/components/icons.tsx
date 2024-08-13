@@ -1,7 +1,9 @@
-import { Command, LucideProps } from "lucide-react"
+import { ChevronLeft, ChevronRight, Command, LucideProps } from "lucide-react"
 
 export const Icons = {
   logo: Command,
+  chevronLeft: ChevronLeft,
+  chevronRight: ChevronRight,
   gitHub: ({ ...props }: LucideProps) => (
     <svg
       aria-hidden="true"
