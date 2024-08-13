@@ -6,6 +6,14 @@ Note: Technology is never set in stone, so feel free to modify it according to y
 
 ## Features
 
-- User Login and Registration (WIP)
+- User Login and Registration 📖
 
 - User Profile (WIP)
+
+- Payment (WIP)
+
+- Send Email (WIP)
+
+- Document Management (WIP)
+
+- Blog Management (WIP)

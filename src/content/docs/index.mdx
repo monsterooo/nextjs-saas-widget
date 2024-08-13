@@ -1,7 +1,433 @@
 ---
 title: User System
-description: This page is in progress.
-date: "2024-07-12"
+description: Integrate Auth.js to provide a user system for you.
+date: "2024-08-10"
 ---
 
-content
+## Introduction
+
+In Next.js, using [Auth.js](https://authjs.dev/) as our user authentication system is currently a mainstream and stable solution. It is not only powerful but also offers many login methods such as OAuth, Magic Links, Credentials, and WebAuthn.
+
+Please note that the previous version of [Auth.js(v5)](https://authjs.dev/) was called [NextAuth.js](https://next-auth.js.org/), which we no longer recommend using. Now, the latest version of Auth.js, although still in beta, is already suitable for production use.
+
+## Project Setup
+
+Before proceeding, I assume you have already configured PostgreSQL and Prisma. If not, you can refer to the [Prisma documentation](https://www.prisma.io/docs/getting-started/quickstart).
+
+### Install Dependencies
+
+```bash
+yarn add next-auth@beta @auth/prisma-adapter
+```
+
+### Configure Environment Variables
+
+Configure your Auth.js environment variables in the .env file. Here, I am using [Github](https://authjs.dev/getting-started/providers/github) as the login method. If you have other providers, you can refer to the documentation to add them.
+
+```bash
+# Authentication (NextAuth.js)
+AUTH_URL=http://localhost:3000 # Optional Ref: https://authjs.dev/getting-started/deployment#auth_url
+AUTH_SECRET=CiarUmtMY5hCLUscPBaGZSt22U6rMFLLJ4RSWIACZ4wU # openssl rand -base64 33
+AUTH_GITHUB_ID=Your Github Client ID
+AUTH_GITHUB_SECRET=Your Github Client Secret
+```
+
+- `AUTH_URL` is optional and is inferred from the request headers by default. You only need to configure this if you have a different base path.
+
+- `AUTH_SECRET` can be generated using openssl rand -base64 33.
+
+- `AUTH_GITHUB_ID` and `AUTH_GITHUB_SECRET` can be obtained by creating a new OAuth app in the [GitHub Developer](https://github.com/settings/developers) Settings.
+
+### Database
+
+Next, you need to create database tables to store user and OAuth information. Below is the Prisma schema file. However, to prevent any updates to the documentation, you should check the [latest documentation](https://authjs.dev/getting-started/adapters/prisma).
+
+```prisma
+model User {
+  id            String          @id @default(cuid())
+  name          String?
+  email         String          @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  // Optional for WebAuthn support
+  Authenticator Authenticator[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+// Optional for WebAuthn support
+model Authenticator {
+  credentialID         String  @unique
+  userId               String
+  providerAccountId    String
+  credentialPublicKey  String
+  counter              Int
+  credentialDeviceType String
+  credentialBackedUp   Boolean
+  transports           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, credentialID])
+}
+```
+
+Then, execute **npx prisma migrate dev --name add_user** to apply the schema changes to the database.
+
+### Create Auth.js Configuration
+
+> Please note: If you check the Auth.js tutorial, you will find that it only creates a single auth.ts file. However, we need to validate user login in middleware, so we will use the auth method built by NextAuth in edge functions. But the PrismaAdapter is not supported in edge functions. Therefore, we need to create two configuration files, one for middleware and one for our backend services. If you’re interested, you can find more information [here](https://authjs.dev/getting-started/adapters/prisma#edge-compatibility).
+
+- Create the basic Auth.js configuration
+
+This configuration serves as our base configuration and does not include any database-related configurations.
+
+```js
+// lib/auth.config.ts
+
+import NextAuth, { NextAuthConfig } from "next-auth";
+import type { Provider } from "next-auth/providers";
+import GitHub from "next-auth/providers/github";
+
+export const providers: Provider[] = [GitHub];
+
+export const providerMap = providers.map((provider) => {
+  if (typeof provider === "function") {
+    const providerData = provider();
+    return { id: providerData.id, name: providerData.name };
+  } else {
+    return { id: provider.id, name: provider.name };
+  }
+});
+
+export const authConfig = {
+  providers,
+  session: { strategy: "jwt" }, // Use JWT strategy for edge functions
+  pages: {
+    signIn: "/signin",
+  },
+  callbacks: {
+    jwt: ({ token, user, trigger }) => {
+      // Save id to JWT
+      if (user && user.id) {
+        token.id = user.id;
+      }
+      // You can send welcome emails to new users
+      if (trigger === "signUp" && user.email) {
+      }
+      return token;
+    },
+    session: ({ session, token }) => {
+      if (session?.user) {
+        session.user.id = token.id;
+      }
+      return session;
+    },
+  },
+} satisfies NextAuthConfig;
+
+```
+
+- Create Auth.js configuration with database adapter
+
+```js
+// lib/auth.ts
+import { PrismaAdapter } from "@auth/prisma-adapter"
+import NextAuth from "next-auth"
+
+import { authConfig } from "./auth.config"
+import { db } from "./db"
+
+export const { handlers, signIn, signOut, auth } = NextAuth({
+  adapter: PrismaAdapter(db),
+  ...authConfig,
+})
+```
+
+### Login Route
+
+To handle login requests, we need to create the **src/app/api/auth/[...nextauth].ts** route to process login requests.
+
+```js
+// src/app/api/auth/[...nextauth].ts
+
+import { handlers } from "@/lib/auth"
+
+export const { GET, POST } = handlers
+```
+
+### Sign In
+
+Alright, with the preparations done, you can now proceed to sign in.
+
+In a simple case, you can use signIn to log in from anywhere on your page (page, modal).
+
+```js
+// src/app/page.tsx
+import { auth, signIn, signOut } from "@/lib/auth"
+
+;<form
+  action={async () => {
+    "use server"
+    await signIn("github")
+  }}
+>
+  <Button type="submit" className="flex gap-2 text-base">
+    <Github />
+    Sign In
+  </Button>
+</form>
+```
+
+Once you click the button, you will be redirected to the GitHub login page, and after a successful login, you will be redirected to the homepage.
+
+### Retrieve User Information and Check Login Status
+
+After logging in, you may want to retrieve user information or check if the user is already logged in. To achieve this, simply use the auth method to get user information.
+
+```js
+// src/app/page.tsx
+
+import { redirect } from "next/navigation"
+
+import { auth, signIn, signOut } from "@/lib/auth"
+
+export default async function Home() {
+  const session = await auth()
+
+  // Please note that this check is fragile; you should still verify the user's login status in your API
+  if (!session?.user) {
+    redirect("/signin")
+  }
+
+  return (
+    <main>
+      <h1>Welcome {session.user.name}</h1>
+    </main>
+  )
+}
+```
+
+This way, you can log in or display user information.
+
+```js
+import { Github, LogOut } from "lucide-react"
+
+import { auth, signIn, signOut } from "@/lib/auth"
+import { Button } from "@/components/ui/button"
+
+export default async function Home() {
+  const session = await auth()
+
+  return (
+    <div className="relative flex">
+      {session?.user ? (
+        <div className="flex gap-4 items-center justify-center bg-gradient-radial to-transparent">
+          <p className="text-2xl font-bold">
+            Welcome back, {session.user.name}
+          </p>
+          <form
+            action={async () => {
+              "use server"
+              await signOut()
+            }}
+          >
+            <Button type="submit" className="flex gap-2 text-base">
+              <LogOut />
+              Sign Out
+            </Button>
+          </form>
+        </div>
+      ) : (
+        <form
+          action={async () => {
+            "use server"
+            await signIn("github", { redirectTo: "/" })
+          }}
+        >
+          <Button type="submit" className="flex gap-2 text-base">
+            <Github />
+            Sign In
+          </Button>
+        </form>
+      )}
+    </div>
+  )
+}
+```
+
+### Custom Login Page
+
+If you need a custom login page, you can create one yourself by creating the **src/app/signin/page.tsx** file and implementing the login logic.
+
+```js
+import { redirect } from "next/navigation"
+import { Github } from "lucide-react"
+import { AuthError } from "next-auth"
+
+import { signIn } from "@/lib/auth"
+import { providerMap } from "@/lib/auth.config"
+import { Button } from "@/components/ui/button"
+
+export default async function SignInPage() {
+  return (
+    <div className="flex flex-col gap-2 h-screen items-center justify-center">
+      {Object.values(providerMap).map((provider) => (
+        <form
+          key={provider.id}
+          action={async () => {
+            "use server"
+            try {
+              await signIn(provider.id, {
+                redirectTo: "/",
+              })
+            } catch (error) {
+              // Signin can fail for a number of reasons, such as the user
+              // not existing, or the user not having the correct role.
+              // In some cases, you may want to redirect to a custom error
+              if (error instanceof AuthError) {
+                return redirect(
+                  "http://localhost:3000/signin?error=${error.type}"
+                )
+              }
+
+              // Otherwise if a redirects happens NextJS can handle it
+              // so you can just re-thrown the error and let NextJS handle it.
+              // Docs:
+              // https://nextjs.org/docs/app/api-reference/functions/redirect#server-component
+              throw error
+            }
+          }}
+        >
+          <Button type="submit" className="flex gap-2 text-base">
+            <Github />
+            <span>Sign in with {provider.name}</span>
+          </Button>
+        </form>
+      ))}
+    </div>
+  )
+}
+```
+
+### Sign Out
+
+If you need to sign out, simply call the `signOut` method.
+
+```js
+import { auth, signIn, signOut } from "@/lib/auth"
+
+export default async function Home() {
+  const session = await auth()
+
+  return (
+    <div>
+      {session?.user && (
+        <form
+          action={async () => {
+            "use server"
+            await signOut()
+          }}
+        >
+          <Button type="submit" className="flex gap-2 text-base">
+            <LogOut />
+            Sign Out
+          </Button>
+        </form>
+      )}
+    </div>
+  )
+}
+```
+
+### User Authentication in API
+
+In your API, you may need to verify that the user is logged in before processing any business logic. Here’s how to authenticate the user in an API.
+
+```js
+import { NextResponse } from "next/server"
+import { auth } from "@/lib/auth"
+import { db } from "@/lib/db"
+
+
+export const POST = auth(async function POST(req) {
+  // User must be logged
+  if (!req.auth) {
+    return NextResponse.json("Unauthorized", { status: 403 })
+  }
+
+  // Your logic here
+  return NextResponse.json({})
+}
+```
+
+### User Authentication in Middleware
+
+In Middleware, you can use the auth method to verify whether the user is logged in.
+
+```js
+import NextAuth from "next-auth"
+
+import { authConfig } from "./lib/auth.config"
+
+export const { auth } = NextAuth(authConfig)
+
+export default auth(async (req) => {
+  // Your middleware logic here
+  // When is not auth, req.auth is null
+  // Here is just an example of not logging in
+  // if (!req.auth) {
+  //   return NextResponse.redirect(
+  //     new URL(`/signin?from=${encodeURIComponent(from)}`, req.url)
+  //   )
+  // }
+})
+```
+
+### Github Repo
+
+If you’re looking for code examples, visit [nextjs-authjs](https://github.com/nextjs-saas-widget/nextjs-authjs)
+
+If you have any questions, feel free to reach out to me on Twitter [@createthink_net](https://twitter.com/https://twitter.com/createthink_net)

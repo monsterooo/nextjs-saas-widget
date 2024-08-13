@@ -30,3 +30,6 @@
 [data-rehype-pretty-code-title] + pre {
   @apply mt-0;
 }
+[data-rehype-pretty-code-figure] code {
+  @apply border-0;
+}

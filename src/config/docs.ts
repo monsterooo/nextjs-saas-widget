@@ -6,10 +6,6 @@ export const docsConfig: DocsConfig = {
       title: "Documentation",
       href: "/docs",
     },
-    // {
-    //   title: "Guides",
-    //   href: "/guides",
-    // },
   ],
   sidebarNav: [
     {
@@ -17,7 +13,7 @@ export const docsConfig: DocsConfig = {
       items: [
         {
           title: "User System",
-          href: "/docs/user-system",
+          href: "/docs",
         },
       ],
     },

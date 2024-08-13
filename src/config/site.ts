@@ -7,6 +7,6 @@ export const siteConfig: SiteConfig = {
   ogImage: "https://nextjs-saas-widget.vercel.app/og.jpg",
   links: {
     twitter: "https://twitter.com/createthink_net",
-    github: "https://github.com/monsterooo/nextjs-saas-widget",
+    github: "https://github.com/nextjs-saas-widget/nextjs-saas-widget",
   },
 }
